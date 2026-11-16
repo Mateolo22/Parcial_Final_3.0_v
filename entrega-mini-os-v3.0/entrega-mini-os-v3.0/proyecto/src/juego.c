@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include "kernel.h"
 #include "seguridad.h"
+#include "terminal.h"
 #include "fs.h"
 #include "juego.h"
 
@@ -40,6 +41,7 @@ typedef struct {
 static Partida partida;
 static pthread_mutex_t mutex_partida = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t mutex_control = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t mutex_guardado = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t cond_autoguardado = PTHREAD_COND_INITIALIZER;
 static int detener_autoguardado = 0;
 static struct termios termios_original;
@@ -51,13 +53,17 @@ static void modo_juego_raw(int activar) {
             termios_disponible = 0;
             return;
         }
+        terminal_registrar(&termios_original);
         struct termios temporal = termios_original;
-        temporal.c_lflag &= (tcflag_t)~(ICANON | ECHO);
+        /* Sin ISIG, Ctrl+C y Ctrl+Z llegan como bytes y el juego los trata
+           como pausa; así el proceso no muere dejando el terminal en crudo. */
+        temporal.c_lflag &= (tcflag_t)~(ICANON | ECHO | ISIG);
         temporal.c_cc[VMIN] = 0;
         temporal.c_cc[VTIME] = 0;
         if (tcsetattr(STDIN_FILENO, TCSANOW, &temporal) == 0) termios_disponible = 1;
+        else terminal_restaurar();
     } else if (termios_disponible) {
-        (void)tcsetattr(STDIN_FILENO, TCSANOW, &termios_original);
+        terminal_restaurar();
         termios_disponible = 0;
     }
 }
@@ -98,7 +104,7 @@ static int escribir_todo(int fd, const void *datos, size_t n) {
 
 /* Escritura atómica: si MiniOS se interrumpe mientras guarda, el .sav anterior
    sigue intacto y el temporal no sustituye una partida válida. */
-static int guardar_partida_archivo(const Partida *p) {
+static int guardar_partida_archivo_sin_bloqueo(const Partida *p) {
     char ruta[96], temporal[112];
     ruta_partida(p->jugador, ruta, sizeof ruta);
     snprintf(temporal, sizeof temporal, "%s.tmp", ruta);
@@ -115,6 +121,15 @@ static int guardar_partida_archivo(const Partida *p) {
     }
     (void)chmod(ruta, 0600);
     return 0;
+}
+
+/* El autoguardado y el guardado manual comparten el mismo .tmp; el mutex
+   serializa su escritura para que ningún rename borre el temporal del otro. */
+static int guardar_partida_archivo(const Partida *p) {
+    pthread_mutex_lock(&mutex_guardado);
+    int resultado = guardar_partida_archivo_sin_bloqueo(p);
+    pthread_mutex_unlock(&mutex_guardado);
+    return resultado;
 }
 
 static void *hilo_autoguardado(void *arg) {
@@ -254,7 +269,8 @@ static void ejecutar_partida(void) {
         if (c == 's' || c == 'S') { if (partida.direccion != 0) partida.direccion = 2; }
         if (c == 'a' || c == 'A') { if (partida.direccion != 1) partida.direccion = 3; }
         if (c == 'g' || c == 'G') guardar_manual = 1;
-        if (c == 'q' || c == 'Q') {
+        /* q, Ctrl+C o Ctrl+Z: pausar y guardar sin matar el proceso. */
+        if (c == 'q' || c == 'Q' || c == 3 || c == 26) {
             salir_solicitado = 1;
             terminar = 1;
         }

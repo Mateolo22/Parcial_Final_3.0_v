@@ -91,7 +91,7 @@ static void mostrar_lscpu(void) {
 #endif
 
 void virt_info(void) {
-    char cpu_vendor[13] = "no disponible";
+    char cpu_vendor[16] = "no disponible";
     char firma[13] = "";
     char dmi_vendor[96], dmi_producto[96], systemd[64];
     int dentro_vm = 0, vtx = 0, amdv = 0;
@@ -116,8 +116,12 @@ void virt_info(void) {
     if (max_extendida >= 0x80000001U && __get_cpuid(0x80000001U, &a, &b, &c, &d))
         amdv = (int)((c >> 2) & 1U);
 
-    unsigned int max_hipervisor = __get_cpuid_max(0x40000000U, NULL);
-    if (max_hipervisor >= 0x40000000U && __get_cpuid(0x40000000U, &a, &b, &c, &d)) {
+    /* __get_cpuid() de GCC 13 clasifica el leaf 0x40000000 como básico
+       (__ext = leaf & 0x80000000) y devuelve 0 siempre. El leaf del
+       hipervisor solo es válido si CPUID.1 expone el bit hypervisor, así
+       que se comprueba ese bit y se lee el leaf con __cpuid directamente. */
+    if (dentro_vm) {
+        __cpuid(0x40000000U, a, b, c, d);
         memcpy(firma, &b, 4);
         memcpy(firma + 4, &c, 4);
         memcpy(firma + 8, &d, 4);

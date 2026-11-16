@@ -1,13 +1,35 @@
+#include <signal.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include "kernel.h"
 #include "fs.h"
 #include "seguridad.h"
+#include "terminal.h"
 #include "bitacora.h"
 #include "virtualizacion.h"
 #include "juego.h"
 #include "proc.h"
 #include "sistema.h"
+
+/* Restaura el terminal y deja el RAID con el superbloque limpio antes de
+   salir. tcsetattr, pwrite, fsync y close son seguros en un manejador. */
+static void manejador_salida(int sig) {
+    terminal_restaurar();
+    fs_desmontar();
+    _exit(128 + sig);
+}
+
+static void instalar_manejadores(void) {
+    struct sigaction accion;
+    memset(&accion, 0, sizeof accion);
+    accion.sa_handler = manejador_salida;
+    sigemptyset(&accion.sa_mask);
+    accion.sa_flags = 0; /* Sin SA_RESTART: interrumpe fgets/select. */
+    (void)sigaction(SIGINT, &accion, NULL);
+    (void)sigaction(SIGTERM, &accion, NULL);
+}
 
 static void mostrar_menu(void) {
     printf("\n========== MiniOS v%s | %s (%s) ==========\n",
@@ -32,6 +54,8 @@ static void mostrar_menu(void) {
 }
 
 int main(void) {
+    instalar_manejadores();
+
     if (mkdir(DIR_DATOS, 0700) != 0) {
         struct stat st;
         if (stat(DIR_DATOS, &st) != 0 || !S_ISDIR(st.st_mode)) {

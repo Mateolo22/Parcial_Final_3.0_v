@@ -46,7 +46,7 @@ no debe considerarse equivalente a Argon2, bcrypt o yescrypt en un sistema de pr
 - Mensaje genérico para usuario inexistente, clave incorrecta o cuenta bloqueada.
 - Bloqueo persistente después de tres intentos fallidos; solo admin puede desbloquear.
 - Administración de usuarios y cambio de contraseña con mínimo seis caracteres.
-- La matriz se valida en cada acción y se regenera al detectar un archivo antiguo/incompatible. Todos los roles pueden actualizar su propia contraseña (`D_UPDATE` de usuarios); solo admin puede listar, crear o desbloquear cuentas.
+- La matriz se valida en cada acción y se regenera al detectar un archivo antiguo/incompatible. Todos los roles pueden actualizar su propia contraseña (`D_UPDATE` de usuarios); solo admin puede listar, crear o desbloquear cuentas. Los derechos de bitácora, alta de usuarios y modificación de matriz son exclusivos del administrador: la matriz rechaza delegarlos y los elimina si un archivo editado a mano los trae.
 
 ### 7. Bitácora
 
@@ -97,8 +97,10 @@ No elimine datos importantes fuera de una VM desechable o una copia de prueba.
 ### 9.1 Autoguardado concurrente
 
 - Un hilo guarda la partida del usuario cada 15 segundos.
-- El estado compartido se copia bajo `pthread_mutex_t`; la escritura al archivo se realiza
-  después de liberar el mutex, evitando que el juego quede bloqueado por operaciones de E/S.
+- El estado compartido se copia bajo `pthread_mutex_t`; el juego no queda bloqueado por las
+  operaciones de E/S.
+- Un segundo mutex serializa la escritura del archivo: el autoguardado y el guardado manual
+  no pueden abrir a la vez el mismo `.tmp`, así que ningún `rename` borra el temporal del otro.
 - El guardado usa archivo temporal, `fsync` y `rename` para sustituir el `.sav` de forma
   atómica. Las partidas tienen permisos `0600`.
 - Al salir normalmente se guarda el último estado y se puede continuar desde el menú.
@@ -133,6 +135,14 @@ virtual) y `VmRSS` (memoria residente/física aproximada) desde `/proc/<pid>/sta
 el tamaño de página con `sysconf(_SC_PAGESIZE)` y calcula cuántas páginas representan esos
 valores. Las métricas solo están disponibles mientras el proceso exista.
 
+### Robustez de la terminal y apagado
+
+MiniOS guarda la configuración original del terminal antes de desactivar el eco o entrar en
+modo de juego. Si recibe `SIGINT` o `SIGTERM`, restaura el terminal, marca el disco como
+limpio y sale con código `128 + señal`: la shell no queda sin eco ni el arreglo RAID en
+estado sucio. Dentro de Snake, `Ctrl+C` y `Ctrl+Z` pausan y guardan la partida en lugar de
+matar el proceso.
+
 ## Archivos de datos y permisos
 
 La carpeta `datos/` se crea con permisos `0700`. Los archivos sensibles (`usuarios.dat`,
@@ -159,6 +169,8 @@ iniciales en texto legible.
 7. Probar autoguardado, continuar partida y recuperación RAID 1.
 8. Lanzar un proceso, suspenderlo con Ctrl+Z, reanudarlo y terminarlo; consultar el monitor
    de memoria.
+9. En el login (o en el menú) pulsar `Ctrl+C` y comprobar que la terminal recupera el eco y
+   que el siguiente arranque no advierte un apagado sucio.
 
 > La demostración de snapshot debe hacerse dentro de una VM de prueba y con copia de
 > seguridad de los archivos que se necesiten conservar.

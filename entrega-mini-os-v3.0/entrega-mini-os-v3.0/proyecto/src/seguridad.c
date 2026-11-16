@@ -9,6 +9,7 @@
 #include <termios.h>
 #include "kernel.h"
 #include "seguridad.h"
+#include "terminal.h"
 #include "bitacora.h"
 
 #define ARCH_MATRIZ   DIR_DATOS "matriz.dat"
@@ -70,6 +71,7 @@ static void leer_clave(const char *prompt, char *buf, size_t n) {
     struct termios original, temporal;
     int ocultar = isatty(STDIN_FILENO) && tcgetattr(STDIN_FILENO, &original) == 0;
     if (ocultar) {
+        terminal_registrar(&original);
         temporal = original;
         temporal.c_lflag &= (tcflag_t)~ECHO;
         (void)tcsetattr(STDIN_FILENO, TCSAFLUSH, &temporal);
@@ -78,7 +80,7 @@ static void leer_clave(const char *prompt, char *buf, size_t n) {
     leer_linea(prompt, buf, (int)n);
 
     if (ocultar) {
-        (void)tcsetattr(STDIN_FILENO, TCSAFLUSH, &original);
+        terminal_restaurar();
         putchar('\n');
     }
 }
@@ -427,6 +429,24 @@ void seg_cargar_matriz(void) {
             corregida = 1;
         }
     }
+
+    /* Derechos exclusivos del administrador: no se aceptan para otros
+       roles aunque el archivo los traiga (por ejemplo, editado a mano). */
+    for (int r = 0; r < NUM_ROLES; ++r) {
+        if (r == ROL_ADMIN) continue;
+        if (matriz[r][OBJ_BITACORA] & D_READ) {
+            matriz[r][OBJ_BITACORA] &= (unsigned char)~D_READ;
+            corregida = 1;
+        }
+        if (matriz[r][OBJ_USUARIOS] & D_CREATE) {
+            matriz[r][OBJ_USUARIOS] &= (unsigned char)~D_CREATE;
+            corregida = 1;
+        }
+        if (matriz[r][OBJ_MATRIZ] & D_UPDATE) {
+            matriz[r][OBJ_MATRIZ] &= (unsigned char)~D_UPDATE;
+            corregida = 1;
+        }
+    }
     if (corregida) seg_guardar_matriz();
 }
 
@@ -461,6 +481,17 @@ void seg_modificar_matriz(void) {
     if (o < 0 || o >= NUM_OBJETOS) return;
     int n = leer_entero("Nuevos derechos (0..31): ");
     if (n < 0 || n > 31) return;
+
+    /* Bitácora, alta de usuarios y edición de la matriz son exclusivas del
+       admin; el menú y las funciones ya exigen ese rol, así que delegarlas
+       desde la matriz dejaría una concesión que nunca se aplicaría. */
+    if (r != ROL_ADMIN &&
+        ((o == OBJ_BITACORA && (n & D_READ)) ||
+         (o == OBJ_USUARIOS && (n & D_CREATE)) ||
+         (o == OBJ_MATRIZ && (n & D_UPDATE)))) {
+        printf("Cambio rechazado: ese derecho es exclusivo del administrador.\n");
+        return;
+    }
 
     if (r == ROL_ADMIN &&
         ((o == OBJ_MATRIZ && !(n & D_UPDATE)) ||
