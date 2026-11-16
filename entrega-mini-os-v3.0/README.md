@@ -1,5 +1,7 @@
 # Entrega — MiniOS v3.0 (Taller 2)
 
+Integrantes Mateo Daza Ortiz ID 410597 Samuel Luna ID 410849 
+
 Paquete de revisión, corrección y pruebas de MiniOS v3.0. Reúne el código corregido, la suite de pruebas, las capturas de la última ejecución y la documentación de los cinco defectos críticos.
 
 **Estado verificado:** 5/5 críticos corregidos · **136/136** comprobaciones · **11/11** etapas · **59** capturas.
